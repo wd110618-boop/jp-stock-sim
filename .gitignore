@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 環境変数・Secrets（絶対にGitへコミットしない）
+.env
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 取引履歴の一時出力（save_trades_csv使用時のみ生成される）
+trade_history.csv
