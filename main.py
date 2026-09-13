@@ -16,7 +16,7 @@
 """
 import streamlit as st
 
-from config import DEFAULT_UNIVERSE, DEFAULT_BACKTEST_YEARS, INITIAL_CAPITAL, PAPER_MODE
+from config import DEFAULT_UNIVERSE, DEFAULT_BACKTEST_YEARS, INITIAL_CAPITAL, PAPER_MODE, SCREENING_UNIVERSE
 from data_provider import YFinanceDataProvider, DataProviderError
 from backtester import Backtester
 from indicators import add_all_indicators
@@ -26,6 +26,7 @@ from risk_manager import (
     RiskSettings, max_shares_by_risk, max_shares_by_position_limit,
     calc_stop_loss_price, can_afford_min_lot, min_purchase_amount,
 )
+import screening
 import dashboard as dash
 
 st.set_page_config(
@@ -61,6 +62,10 @@ if "raw_price_data" not in st.session_state:
     st.session_state.raw_price_data = None
 if "display_mode" not in st.session_state:
     st.session_state.display_mode = "かんたん表示"
+if "screening_result" not in st.session_state:
+    st.session_state.screening_result = None
+if "screening_errors" not in st.session_state:
+    st.session_state.screening_errors = []
 
 _SETTINGS_DEFAULTS = {
     "years": DEFAULT_BACKTEST_YEARS,
@@ -81,6 +86,59 @@ def fetch_price_data(codes: tuple, years: int):
         except DataProviderError as e:
             errors.append(str(e))
     return data, errors
+
+
+@st.cache_data(show_spinner=False, ttl=3600 * 4)
+def fetch_screening_results(universe_items: tuple):
+    """
+    広域スクリーニングの実行結果をキャッシュする（4時間）。
+    「毎日」使う想定のため、日中に何度もタップしても再取得しないようにしている。
+    キャッシュを無視して最新化したい場合は、ブラウザをリロードするか
+    しばらく時間を置いてから再実行してください。
+    """
+    universe = dict(universe_items)
+    rows, errors = screening.run_screening(universe, years=screening.SCREENING_HISTORY_YEARS)
+    return rows, errors
+
+
+def render_screening_section():
+    """
+    【広域スクリーニング】バックテスト対象の10銘柄とは別に、大型株ユニバース
+    （config.SCREENING_UNIVERSE、約100銘柄）に対して現在の買いシグナルを一覧表示する。
+    バックテストの実行有無にかかわらず、いつでも単独で使える。
+    """
+    with st.expander("🔍 広域スクリーニング（大型株ユニバース）", expanded=False):
+        st.caption(
+            f"バックテスト対象銘柄とは別に、大型株ユニバース（約{len(SCREENING_UNIVERSE)}銘柄）"
+            "全体に対して、現在の買いシグナルを機械的に判定します。"
+            "銘柄リストは独自にまとめた概算であり、JPX公式のTOPIX100構成銘柄とは"
+            "完全には一致しない場合があります（config.pyのSCREENING_UNIVERSEで編集可能）。"
+        )
+        judgement_filter = st.selectbox(
+            "表示する判定", ["すべて", "買い候補+様子見", "買い候補のみ"],
+            key="screening_filter",
+        )
+        run_clicked = st.button(
+            "🔍 スクリーニング実行", type="primary", width="stretch", key="run_screening",
+        )
+
+        if run_clicked:
+            universe = {item["code"]: item["name"] for item in SCREENING_UNIVERSE}
+            with st.spinner(f"{len(universe)}銘柄のデータを取得・判定中...(1〜2分程度かかる場合があります)"):
+                rows, errors = fetch_screening_results(tuple(universe.items()))
+            st.session_state.screening_result = rows
+            st.session_state.screening_errors = errors
+
+        if st.session_state.screening_errors:
+            st.warning(
+                f"{len(st.session_state.screening_errors)}銘柄のデータ取得に失敗しました"
+                "（取得できた銘柄のみ結果に表示しています）。"
+            )
+
+        if st.session_state.screening_result:
+            dash.render_screening_results(st.session_state.screening_result, judgement_filter)
+        else:
+            st.info("「スクリーニング実行」を押すと、大型株ユニバース全体の売買シグナルを判定します。")
 
 
 # ==================================================================
@@ -231,6 +289,9 @@ def main():
     dash.render_header()
     render_display_mode_toggle()
     is_simple_mode = st.session_state.display_mode == "かんたん表示"
+
+    # バックテストの実行有無にかかわらず、いつでも使える広域スクリーニング
+    render_screening_section()
 
     has_result_before = st.session_state.backtest_result is not None
 
