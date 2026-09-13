@@ -28,6 +28,7 @@ from risk_manager import (
 )
 import screening
 import dashboard as dash
+
 st.set_page_config(
     page_title="日本株 自動売買シミュレーター",
     page_icon="📈",
